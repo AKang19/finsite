@@ -1,0 +1,64 @@
+# path: backend/docker-compose.yml
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: fin-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: fin
+      POSTGRES_USER: fin
+      POSTGRES_PASSWORD: finpass
+    ports:
+      - "5432:5432"
+    volumes:
+      - fin_pg_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fin -d fin"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  api:
+    build: .
+    container_name: fin-api
+    restart: always
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_URL: postgresql+psycopg2://fin:0857@postgres:5432/fin
+      ALLOW_ORIGINS: http://localhost:3000
+      PRICE_DATA_SOURCE: twse
+      MARKET_TZ: Asia/Taipei
+      MARKET_CLOSE_HHMM: "17:05"
+      PYTHONPATH: /app
+    volumes:
+      - .:/app
+      - ../data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: >
+      sh -c "uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  scheduler:
+    build: .
+    container_name: fin-scheduler
+    restart: always
+    depends_on:
+      api:
+        condition: service_started
+    environment:
+      API_BASE_FOR_ETL: http://api:8000
+      DATABASE_URL: postgresql+psycopg2://fin:0857@postgres:5432/fin
+      BACKFILL_LOOKBACK_DAYS: "16"      # 你剛說要 7 天就設 7
+      DAILY_CRON: "0 17 * * 1-5"
+      PYTHONPATH: /app
+      TZ: Asia/Taipei
+    volumes:
+      - .:/app
+      - ../data:/data
+    # 用 sh 來跑，就算權限被 bind mount 蓋掉也 OK
+    command: ["sh", "-lc", "/usr/local/bin/entry_scheduler.sh"]
+
+volumes:
+  fin_pg_data:
